@@ -1,0 +1,1 @@
+Well, this is a project to take the distances between bases output from freelancer companion and load that into an interactive system which lets you set up a set of trade routes and then print that to a marketcommodities file, and then save those settings. 
