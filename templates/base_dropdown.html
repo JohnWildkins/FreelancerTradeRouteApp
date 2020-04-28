@@ -1,8 +1,14 @@
 <html>
     <head>
-        Choose a base 
+        <meta charset="UTF-8">
+        <title>Dropdown</title>
     </head>
+
     <body>
-        <h1>dropdown goes here \n {{ drops }}</h1>
+    <select name= drops method = "GET" action="/">
+        {% for base in drops %}
+        <option value = "{{base}}" SELECTED>{{base}}</option>
+        {% endfor %}
+    </select>
     </body>
 </html>
