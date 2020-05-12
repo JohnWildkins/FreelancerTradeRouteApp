@@ -1,5 +1,6 @@
 import numpy as np 
 import pandas as pd
+from collections import defaultdict
 
 
 #Core Functions
@@ -147,8 +148,7 @@ def sort_by_closest_base(list_of_bases, distances):
 def gen_market_from_config(config, distances):
     '''
     function that reads the config file(currently a list of lists) and turns that into a dictonary much closer to the marketgoods ini for the backwards-parser to turn into a text file. 
-    A COUPLE BASES AREN'T GETTING THEIR FRICKING PURCHASES RECORDED STILL. SORT THAT OUT. 
-    
+ 
     Parameters
     ++++++++
     config (list of lists): bases that buy and sell each commodity, formatted into a list containing [base name, commodity base produces, comody base resells, comodity base consumes]
@@ -199,6 +199,20 @@ def gen_market_from_config(config, distances):
                 
     return market_goods
 
+def find_nearest_x(base_code, num, distances):
+    '''
+    given the list of distances, finds the nearest num bases to base given
+    ++++++++++
+    Parameters:
+    base_code (str): base you want to find closest guys to
+    num (int): number of bases to return
+    distances(dataframe): pandas DF of all base to base travel times. 
+    ++++++++++
+    Returns:
+    output (lst): list of bases that are n closest to base given
+    '''
+    output = distances[distances['start'] == base_code].sort_values('time', axis = 0).head(num)['end'].to_list()
+    return output
 
 def write_ini(file_path, market, config, base_name_lookup):
     '''
