@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-
+#Core Functions
 
 def get_data(comm_markets_path, distances_path):
     '''
@@ -64,13 +64,13 @@ def get_data(comm_markets_path, distances_path):
     return distances, bases, comm_set, base_names
 
 
-def which_sell(commodity_list):
+def which_sell(bases, commodity_list):
     '''
     A helperfunction that digs through bases and finds which ones sell any of a given list of commodities
     
     Paramaters
     commodity_list(list): a list of the commodity codes (strings) you want to find where they're sold
-    
+    bases (list of dictonaries): a raw read of the marketcommodities.ini as a dictonary
     Returns
     list of bases (list): list of base codes that sell any of the given commodities
     '''
@@ -81,6 +81,37 @@ def which_sell(commodity_list):
                 sells_set.add(i['base_code'])
     l = list(sells_set)
     return [i.strip('\n') for i in l]
+
+def lookup(bases):
+    '''
+    A helperfunction to produce a pair of dictonaries that associate base codes to base names and back again. 
+    +++++++++
+    Parameters
+    bases (list of dictonaries): a raw read of the marketcommodities.ini as a dictonary
+
+    +++++++++
+    Returns
+    two dictonaries for fast lookup of name/code relationship. 
+    base_code_lookup (dict): keys as names, codes as values
+    base_name_lookup (dict): keys as codes, names as values
+    '''
+    keys = [base['Name'].strip('\n') for base in bases]
+    values = [base['base_code'].strip('\n').lower() for base in bases]
+    base_code_lookup = {keys[i]: values[i] for i in range(len(keys))} 
+    base_name_lookup = {values[i]:keys[i] for i in range(len(keys))}
+    return base_code_lookup, base_name_lookup
+
+def commodities_from_config(config):
+    '''
+    takes the config (whatever that turns out to be like, right now its a list of lists) and spits out all of the commodites used
+    '''
+    
+    comm_set = set()
+    for locations in config:
+        comm_set.update(locations[1])
+        comm_set.update(locations[2])
+        comm_set.update(locations[3])
+    return comm_set    
 
 def sort_by_closest_base(list_of_bases, distances):
     '''
@@ -112,3 +143,93 @@ def sort_by_closest_base(list_of_bases, distances):
         sorted_l.append(sorted_bases[sorted_bases[0]==i]['base'].to_list())
 
     return sorted_l
+
+def gen_market_from_config(config, distances):
+    '''
+    function that reads the config file(currently a list of lists) and turns that into a dictonary much closer to the marketgoods ini for the backwards-parser to turn into a text file. 
+    A COUPLE BASES AREN'T GETTING THEIR FRICKING PURCHASES RECORDED STILL. SORT THAT OUT. 
+    
+    Parameters
+    ++++++++
+    config (list of lists): bases that buy and sell each commodity, formatted into a list containing [base name, commodity base produces, comody base resells, comodity base consumes]
+    distances(df): dataframe of all base to base travel times
+    ++++++++
+    Returns
+    market_goods(defaultdict(list)):
+    '''
+    
+    comms = commodities_from_config(config)
+    
+    
+    #loop that rolls through the config file and sorts out the bases that consume and produce each thing. 
+    market = []
+    for commodity in comms:
+        bases_that_consume = []
+        bases_that_produce = []
+            
+        for base in config:
+            if commodity in base[1]:
+                bases_that_produce.append(base[0])
+            if commodity in base[3]:
+                bases_that_consume.append(base[0])
+        
+        market.append({'commodity': commodity, 'produces':bases_that_produce,'consumes':bases_that_consume})
+    
+    
+    #loop that takes the market produced above and turns it into a dictonary of bases, commodities, buy-sells, and travel ties. 
+    market_goods = defaultdict(list)
+    for commodity in market:
+    #print(market_goods)
+        specific_distances = distances[distances['start'].isin(commodity['produces'])]
+        
+   
+        for location in commodity['produces']:
+            market_goods[location].append((commodity['commodity'], 'sells', 1 )) #sets distance for sellers to 1 for purposes of multiplying price by 1. 
+        
+        sorts = sort_by_closest_base(commodity['produces'], specific_distances)
+        #print(sorts)
+        consumer = commodity['consumes']
+        
+        filter_sorts = [[base for base in group if base[1] in consumer] for group in sorts] #nasty comprehension in a comprehension filters out all the bases that are not set as consumers of the commodity
+        
+        for group in filter_sorts:
+            for location in group:
+                market_goods[location[1]].append((commodity['commodity'], 'buy', location[0]))
+                
+                
+    return market_goods
+
+
+def write_ini(file_path, market, config, base_name_lookup):
+    '''
+    function that takes the market dictonary and formats it for freelancer, and saves it as a text file
+    ++++++++++
+    Parameters
+    file_path (str): name and path of file
+    market (defaultdict(list)): per base formatting of all commodities
+    config: file that configures the pricing
+    base_name_lookup (dict): looks up names from base codes
+    ++++++++++
+    Returns:
+    none, 
+    writes a file
+    '''
+    lines = []
+    for item in market.keys():
+
+        lines.append('[BaseGood]')
+        lines.append('base = '+ item)
+        lines.append(';'+base_name_lookup[item])
+
+        for commodity in market[item]:
+            if commodity[1] == 'sells':
+                function_tag = '1'
+            else:
+                function_tag = '0'
+            price_mult = str(commodity[2]) # For a working version, this needs to reference something in config to set prices
+            mgood =['Marketgood =',commodity[0],'0, -1, 0, 0,', function_tag, str(commodity[2])]
+            lines.append(' '.join(mgood))
+
+    with open(file_path, 'w') as f:
+        for line in lines:
+            f.write(line+'\n')
