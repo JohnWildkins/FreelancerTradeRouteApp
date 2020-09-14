@@ -6,24 +6,16 @@ from config import Config
 app=Flask(__name__)
 app.config.from_object(Config)
 
-from app import routes
-
-path_markets = 'market_commodities.ini' # paths to the data we need
-distances_path = 'dump.csv'
-
 # declare a bunch of variables
-distances, bases, comm_set, base_names = get_data(path_markets, distances_path)
-bases_string = ' '.join([base[0] for base in base_names])
-base_names_list = [base[0] for base in base_names]
+distances, bases, comm_set, base_names, sys_names, commod_names = get_data(Config.MARKET_PATH, Config.DISTANCE_PATH)
+base_names_list = ["{0} ({1})".format(base_name, base_int) for base_int, base_name in base_names.items()]
+commod_names_list = ["{0} ({1})".format(commod_name, commod_int) for commod_int, commod_name in commod_names.items()]
 sys = "name does not exit"
-
-
-
 
 @app.route('/')
 def dropdown():
 
-    return render_template('base_dropdown.html', drops = base_names_list, commodities = comm_set)
+    return render_template('base_dropdown.html', drops = base_names_list, commodities = commod_names_list)
 
 if __name__ == '__main__':
     app.run()

@@ -1,10 +1,14 @@
 import os
 
-
 class Base(object):
      commod_list = [] #to be iteratively filled with all the commodities the base handles
 
 class Config(object):
+    FILEPATH = os.getcwd() + '/' # TODO: handling for this program being run from outside the FL directory
+    EQPATH = FILEPATH + 'DATA/EQUIPMENT/'
+    MARKET_PATH = EQPATH + 'market_commodities.ini' # paths to the data we need
+    DISTANCE_PATH = FILEPATH + 'dump.csv'
+
     bases = [] # or load from template
 
     def __str__(self):
