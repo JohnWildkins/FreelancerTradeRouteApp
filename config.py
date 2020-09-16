@@ -5,7 +5,9 @@ class Base(object):
 
 class Config(object):
     FILEPATH = os.getcwd() + '/' # TODO: handling for this program being run from outside the FL directory
-    EQPATH = FILEPATH + 'DATA/EQUIPMENT/'
+    DATAPATH = FILEPATH + 'DATA/'
+    UNIPATH = DATAPATH + 'UNIVERSE/'
+    EQPATH = DATAPATH + 'EQUIPMENT/'
     MARKET_PATH = EQPATH + 'market_commodities.ini' # paths to the data we need
     DISTANCE_PATH = FILEPATH + 'dump.csv'
 

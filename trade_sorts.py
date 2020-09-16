@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from collections import defaultdict
 from config import Config
+import re
 
 
 #Core Functions
@@ -27,15 +28,43 @@ def get_data(comm_markets_path, distances_path):
     distances = distances[distances['start']!=distances['end']]
     distances = distances[distances['time']!=-1]
 
-    bases = {}
-    commodities = set([])
-    commod_ids = {}
-    commod_names = {}
-    base_ids = {}
-    sys_ids = {}
-    base_names = {}
-    sys_names = {}
-    infocards = {}
+    commodities = dict()
+    bases = dict()
+    infocards = dict()
+    sys_ids = dict()
+    system_files = dict()
+
+    # TODO: Separate out into helper functions; make a specialized class for this and generalize config parsing
+
+    with open(Config.FILEPATH + 'SERVICE/infocards.txt', 'r', encoding='utf8') as i:
+        for line in i:
+            if line.strip().isdigit():
+                next(i, None)
+                infocards[line.strip()] = next(i, None)
+
+    with open(Config.FILEPATH + 'DATA/EQUIPMENT/select_equip.ini', 'r') as e:
+        for line in e:
+            if "=" in line:
+                e_type, e_data = (e.strip().lower() for e in line.split('=', maxsplit=1))
+                if "nickname" in e_type and "commodity" in e_data:
+                    commodities[e_data] = {
+                        "strid_name": "",
+                        "display_name": "",
+                        "base_price": 0.0,
+                        "consumed_by": [],
+                        "produced_by": []
+                    }
+                    commodities[e_data]["strid_name"] = next(e).split('=', maxsplit=1)[1].strip().lower()
+
+    with open(Config.FILEPATH + 'DATA/EQUIPMENT/goods.ini', 'r') as g:
+        current_commod = ""
+        for line in g:
+            if "=" in line:
+                g_type, g_data = (g.strip().lower() for g in line.split('=', maxsplit=1))
+                if "nickname" in g_type:
+                    current_commod = g_data
+                if g_type == "price" and current_commod in commodities:
+                    commodities[current_commod]["base_price"] = float(g_data)
 
     with open(comm_markets_path, 'r') as f:
         base = ""
@@ -43,15 +72,32 @@ def get_data(comm_markets_path, distances_path):
             if "=" in line:
                 i_type, i_data = (i.strip().lower() for i in line.split('=', maxsplit=1))
                 if "base" in i_type:
-                    bases[i_data] = {}
+                    bases[i_data] = {
+                        "strid_name": "",
+                        "display_name": "",
+                        "archetype": "",
+                        "system": "",
+                        "commodities": {}
+                    }
                     base = i_data
                 elif "marketgood" in i_type:
                     i_data = i_data.split(",")
                     i_commod = i_data.pop(0)
-                    commodities.add(i_commod)
-                    bases[base][i_commod] = [float(i) for i in i_data]
-
-    commodities = sorted(commodities)
+                    bases[base]["commodities"][i_commod] = {
+                        'raw_data': [float(i) for i in i_data],
+                        'price_mult': float(i_data.pop()),
+                        'consumer': int(i_data.pop()), # this isn't actually a flag for buying / selling, but we can use it as one since it's ignored
+                        'max': int(i_data.pop()),
+                        'min': int(i_data.pop()),
+                        'rep': float(i_data.pop()),
+                        'rank': int(i_data.pop()),
+                        'display_name': infocards[commodities[i_commod]["strid_name"]].strip()
+                        }
+                    bases[base]["commodities"][i_commod]['actual_price'] = bases[base]["commodities"][i_commod]['price_mult'] * commodities[i_commod]['base_price']
+                    if bases[base]["commodities"][i_commod]['consumer'] or bases[base]["commodities"][i_commod]['price_mult'] > 1.0:
+                        commodities[i_commod]['consumed_by'].append(bases[base])
+                    if not bases[base]["commodities"][i_commod]['consumer']:
+                        commodities[i_commod]['produced_by'].append(bases[base])
 
     with open(Config.FILEPATH + 'DATA/UNIVERSE/universe.ini', 'r') as u:
         base = ""
@@ -66,118 +112,111 @@ def get_data(comm_markets_path, distances_path):
                 u_type, u_data = (u.strip().lower() for u in line.split('=', maxsplit=1))
                 if "nickname" in u_type:
                     if system:
-                        sys_ids[u_data] = {}
+                        sys_ids[u_data] = ""
                         sys = u_data
                     else:
-                        base_ids[u_data] = {}
                         base = u_data
                 elif "strid_name" in u_type:
-                    if system: sys_ids[sys][u_type] = u_data
-                    else: base_ids[base][u_type] = u_data
+                    if system:
+                        sys_ids[sys] = u_data
+                    else:
+                        try:
+                            bases[base]["strid_name"] = u_data
+                        except:
+                            pass
+                            # print("WARN: Base {0} found in universe.ini, but not in market_commodities.ini. May be intentional.".format(base))
                 elif "system" in u_type:
-                    base_ids[base][u_type] = u_data
+                    try:
+                        bases[base]["system"] = u_data
+                        bases[base]["system_dis"] = ""
+                    except KeyError:
+                        continue
+                elif "file" in u_type and system:
+                    system_files[sys] = u_data
 
-    with open(Config.FILEPATH + 'DATA/EQUIPMENT/select_equip.ini', 'r') as e:
-        for line in e:
-            if "=" in line:
-                e_type, e_data = (e.strip().lower() for e in line.split('=', maxsplit=1))
-                if "nickname" in e_type and "commodity" in e_data:
-                    commod_ids[e_data] = next(e).split('=', maxsplit=1)[1].strip().lower()
+    systems = dict()
 
-    with open(Config.FILEPATH + 'SERVICE/infocards.txt', 'r', encoding='utf8') as i:
-        for line in i:
-            if line.strip().isdigit():
-                next(i, None)
-                infocards[line.strip()] = next(i, None)
+    for b_name, b_dict in bases.items():
+        strid_name = b_dict['strid_name']
+        system = b_dict['system']
+        sys_strid_name = sys_ids[system]
+        system_path = ""
 
-        for b_name, b_dict in base_ids.items():
-            strid_name = b_dict['strid_name']
-            if strid_name == "0":
-                base_names[b_name] = b_name
-                continue
-            try:
-                base_names[b_name] = infocards[strid_name].strip()
-            except KeyError:
-                base_names[b_name] = b_name
-                print("ERR: No IDS {0} found in infocards.txt for {1}!".format(strid_name, b_name))
+        try:
+            system_path = system_files[system]
+        except KeyError:
+            print("WARN: Path not found for system '{0}'.".format(system))
+        if system not in systems.keys():
+            systems[system] = {}
+            with open(Config.UNIPATH + system_path, 'r') as sys:
+                sys_lines = list(filter(None, [sn.strip() for sn in re.split(r'^\[([A-Za-z]*)\]', sys.read(), flags=re.M)]))
+                sys_keys = [s.lower() for s in sys_lines[::2]]
+                sys_values = sys_lines[1::2]
+                sys_dict = systems[system]
+                for s in range(len(sys_keys)):
+                    s_tuples_raw = []
+                    try:
+                        s_props = [sys for sys in sys_values[s].split('\n') if ';' not in sys]
+                    except IndexError:
+                        print("ERR: Got IndexError while unpacking values in system {0}.".format(system))
+                    for sp in s_props:
+                        s_tuples_raw.append(tuple([s_tup.strip().lower() for s_tup in sp.split('=')]))
+                    if not s_tuples_raw or len(s_props) < 2:
+                        continue
+                    if 'nickname' in s_tuples_raw[0][0]:
+                        nickname = s_tuples_raw.pop(0)
+                        try:
+                            sys_dict[nickname[1]] = {s_type: s_data for s_type, s_data in s_tuples_raw}
+                        except ValueError:
+                            print("ERR: Got ValueError while unpacking sysinfo tuple in system {1}: {0}".format(s_tuples_raw, system))
+                    else:
+                        try:
+                            sys_dict[sys_keys[s]] = {s_type: s_data for s_type, s_data in s_tuples_raw}
+                        except ValueError:
+                            print(s_props)
+                            print("ERR: Got ValueError while unpacking sysinfo tuple in system {1}: {0}".format(s_tuples_raw, system))
 
-        for commod in commodities:
-            strid_name = commod_ids[commod]
-            try:
-                commod_names[commod] = infocards[strid_name].strip()
-            except KeyError:
-                commod_names[commod] = commod
-                print("ERR: No IDS {0} found in infocards.txt for {1}".format(strid_name, commod))
+        if strid_name == "0":
+            b_dict["display_name"] = strid_name
+            continue
+        try:
+            b_dict["display_name"] = infocards[strid_name].strip()
+        except KeyError:
+            b_dict["display_name"] = strid_name
+            print("ERR: No IDS {0} found in infocards.txt for {1}!".format(strid_name, b_name))
 
+        try:
+            b_dict["system_dis"] = infocards[sys_strid_name].strip()
+        except KeyError:
+            b_dict["system_dis"] = sys_strid_name
+            print("ERR: No IDS {0} found in infocards.txt for {1}!".format(sys_strid_name, system))
 
-    return distances, bases, commodities, base_names, sys_names, commod_names
+    for c_name, c_dict in commodities.items():
+        strid_name = c_dict["strid_name"]
+        try:
+            c_dict["display_name"] = infocards[strid_name].strip()
+        except KeyError:
+            c_dict["display_name"] = c_name
+            print("ERR: No IDS {0} found in infocards.txt for {1}".format(strid_name, c_name))
 
-
-def which_sell(bases, commodity_list):
-    '''
-    A helperfunction that digs through bases and finds which ones sell any of a given list of commodities
-    
-    Paramaters
-    commodity_list(list): a list of the commodity codes (strings) you want to find where they're sold
-    bases (list of dictonaries): a raw read of the marketcommodities.ini as a dictonary
-    Returns
-    list of bases (list): list of base codes that sell any of the given commodities
-    '''
-    sells_set = set([])
-    for i in bases:
-        for k in i['commodities']:
-            if k[-1] in commodity_list and k[-3]== 0:
-                sells_set.add(i['base_code'])
-    l = list(sells_set)
-    return [i.strip('\n') for i in l]
-
-def lookup(bases):
-    '''
-    A helperfunction to produce a pair of dictonaries that associate base codes to base names and back again. 
-    +++++++++
-    Parameters
-    bases (list of dictonaries): a raw read of the marketcommodities.ini as a dictonary
-
-    +++++++++
-    Returns
-    two dictonaries for fast lookup of name/code relationship. 
-    base_code_lookup (dict): keys as names, codes as values
-    base_name_lookup (dict): keys as codes, names as values
-    '''
-    keys = [base['Name'].strip('\n') for base in bases]
-    values = [base['base_code'].strip('\n').lower() for base in bases]
-    base_code_lookup = {keys[i]: values[i] for i in range(len(keys))} 
-    base_name_lookup = {values[i]:keys[i] for i in range(len(keys))}
-    return base_code_lookup, base_name_lookup
-
-def commodities_from_config(config):
-    '''
-    takes the config (whatever that turns out to be like, right now its a list of lists) and spits out all of the commodites used
-    '''
-    
-    comm_set = set()
-    for locations in config:
-        comm_set.update(locations[1])
-        comm_set.update(locations[2])
-        comm_set.update(locations[3])
-    return comm_set    
+    return distances, bases, commodities
 
 def sort_by_closest_base(list_of_bases, distances):
     '''
     a function that takes the distances dataframe and any list of bases and sorts all the other bases out into the lists of bases closest to those bases in the list of bases. 
-    Its got a lot of fuckery, and maybe can be given aother pass for better algorithmic complexity. I'm so sorry. 
-    
-    Parameters 
+    Its got a lot of fuckery, and maybe can be given aother pass for better algorithmic complexity. I'm so sorry.
+
+    Parameters
     list_of_bases (list): a list of string base codes
     distances (DataFrame): the base to base travel times from flcomp formatted as a DataFrame by get_data()
-    
+
     Returns:
-    sorted_l (list of lists) list of list of bases, sorted in the same shape as the list of bases fed in, 
+    sorted_l (list of lists) list of list of bases, sorted in the same shape as the list of bases fed in,
     with each list containing those bases that are closest to the base listed at the same index in list_of_bases
     '''
     k = [distances[distances['start'] == i] for i in list_of_bases] # makes a list of dataframes of routes starting from the bases in question
     k = [i[~i['end'].isin(list_of_bases)].reset_index() for i in k] # gets rid of routes between bases in the  list
-    
+
     df = pd.DataFrame()
     for idx, i in enumerate(list_of_bases): #peices the list k back together into a larger thing
         df[i]=k[idx]['time']
@@ -192,106 +231,3 @@ def sort_by_closest_base(list_of_bases, distances):
         sorted_l.append(sorted_bases[sorted_bases[0]==i]['base'].to_list())
 
     return sorted_l
-
-def gen_market_from_config(config, distances):
-    '''
-    function that reads the config file(currently a list of lists) and turns that into a dictonary much closer to the marketgoods ini for the backwards-parser to turn into a text file. 
- 
-    Parameters
-    ++++++++
-    config (list of lists): bases that buy and sell each commodity, formatted into a list containing [base name, commodity base produces, comody base resells, comodity base consumes]
-    distances(df): dataframe of all base to base travel times
-    ++++++++
-    Returns
-    market_goods(defaultdict(list)):
-    '''
-    
-    comms = commodities_from_config(config)
-    
-    
-    #loop that rolls through the config file and sorts out the bases that consume and produce each thing. 
-    market = []
-    for commodity in comms:
-        bases_that_consume = []
-        bases_that_produce = []
-            
-        for base in config:
-            if commodity in base[1]:
-                bases_that_produce.append(base[0])
-            if commodity in base[3]:
-                bases_that_consume.append(base[0])
-        
-        market.append({'commodity': commodity, 'produces':bases_that_produce,'consumes':bases_that_consume})
-    
-    
-    #loop that takes the market produced above and turns it into a dictonary of bases, commodities, buy-sells, and travel ties. 
-    market_goods = defaultdict(list)
-    for commodity in market:
-    #print(market_goods)
-        specific_distances = distances[distances['start'].isin(commodity['produces'])]
-        
-   
-        for location in commodity['produces']:
-            market_goods[location].append((commodity['commodity'], 'sells', 1 )) #sets distance for sellers to 1 for purposes of multiplying price by 1. 
-        
-        sorts = sort_by_closest_base(commodity['produces'], specific_distances)
-        #print(sorts)
-        consumer = commodity['consumes']
-        
-        filter_sorts = [[base for base in group if base[1] in consumer] for group in sorts] #nasty comprehension in a comprehension filters out all the bases that are not set as consumers of the commodity
-        
-        for group in filter_sorts:
-            for location in group:
-                market_goods[location[1]].append((commodity['commodity'], 'buy', location[0]))
-                
-                
-    return market_goods
-
-def find_nearest_x(base_code, num, distances):
-    '''
-    given the list of distances, finds the nearest num bases to base given
-    ++++++++++
-    Parameters:
-    base_code (str): base you want to find closest guys to
-    num (int): number of bases to return
-    distances(dataframe): pandas DF of all base to base travel times. 
-    ++++++++++
-    Returns:
-    output (lst): list of bases that are n closest to base given
-    '''
-    output = distances[distances['start'] == base_code].sort_values('time', axis = 0).head(num)['end'].to_list()
-    return output
-
-def write_ini(file_path, market, config, base_name_lookup):
-    '''
-    function that takes the market dictonary and formats it for freelancer, and saves it as a text file
-    ++++++++++
-    Parameters
-    file_path (str): name and path of file
-    market (defaultdict(list)): per base formatting of all commodities
-    config: file that configures the pricing
-    base_name_lookup (dict): looks up names from base codes
-    ++++++++++
-    Returns:
-    none, 
-    writes a file
-    '''
-    lines = []
-    for item in market.keys():
-
-        lines.append('[BaseGood]')
-        lines.append('base = '+ item)
-        lines.append(';'+base_name_lookup[item])
-
-        for commodity in market[item]:
-            if commodity[1] == 'sells':
-                function_tag = '1'
-            else:
-                function_tag = '0'
-            price_mult = str(commodity[2]) # For a working version, this needs to reference something in config to set prices
-            mgood =['Marketgood =',commodity[0],'0, -1, 0, 0,', function_tag, str(commodity[2])]
-            lines.append(' '.join(mgood))
-
-    with open(file_path, 'w') as f:
-        for line in lines:
-            f.write(line+'\n')

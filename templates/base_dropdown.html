@@ -1,27 +1,29 @@
-<html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Dropdown</title>
-    </head>
+{% extends 'index.html' %}
 
-    <body>
-    <select name= drops method = "GET" action="/">
-        {% for base in drops %}
-        <option value = "{{base}}" SELECTED>{{base}}</option>
-        {% endfor %}
-    </select>
-    <select name = commodities method = "GET" action = "/">
-        {% for commod in commodities %}
-        <option value = "{{commod}}" SELECTED> {{commod}}</option>
-        {% endfor %}
+{% block title %} Base View {% endblock %}
 
-    </select>
-    <br>
-    <input type="radio" id="source" name="buy/sell" value="source">
-    <label for="female">Producer Base</label><br>
-    <input type="radio" id="buys" name="buy/sell" value="buys">
-    <label for="male">Consumer Base</label><br>
-    <input type="radio" id="other" name="buy/sell" value="other">
-    <label for="other">Other</label>
-    </body>
-</html>
+{% block content %}
+
+    <form method="POST" action="/base">
+        <div>{{ form.base_field.label }}: {{ form.base_field }} {{ form.submit }}</div>
+    </form>
+    {% if commods %}
+        <h2>Produced</h2>
+        <ul>
+            {% for c_key, c_items in commods.items() %}
+                {% if not c_items['consumer'] %}
+                    <li>{{ c_items['display_name'] }}</li>
+                {% endif %}
+            {% endfor %}
+        </ul>
+        <h2>Consumed</h2>
+        <ul>
+            {% for c_key, c_items in commods.items() %}
+                {% if c_items['consumer'] %}
+                    <li>{{ c_items['display_name'] }}</li>
+                {% endif %}
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+{% endblock %}
