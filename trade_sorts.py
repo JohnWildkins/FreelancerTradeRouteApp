@@ -3,9 +3,53 @@ import pandas as pd
 from collections import defaultdict
 from config import Config
 import re
+import time
 
 
 #Core Functions
+
+def throw_ini_error(err_type):
+    print(err_type)
+
+def read_ini(ini_path, v_name='nickname', filter_str=None):
+    with open(ini_path, 'r') as ini:
+        ini_lines = list(filter(None, [ln.strip() for ln in re.split(r'^(\[[A-Za-z]*\])', ini.read(), flags=re.M)]))
+        ds = next(i for i, string in enumerate(ini_lines) if '[' in string)
+        i_comments = ini_lines[:ds]
+        i_keys = ini_lines[ds::2]
+        i_values = ini_lines[ds+1::2]
+        ini_dict = dict()
+
+        for i in range(len(i_keys)):
+            if filter_str and filter_str.lower() not in i_keys[i].lower():
+                continue
+
+            value_name = i_keys[i]
+            i_tuples = list()
+
+            try:
+                i_props = list(filter(None, [ip for ip in i_values[i].split('\n') if ';' not in ip]))
+            except IndexError:
+                throw_ini_error(IndexError)
+
+            for ip in i_props:
+                i_tuples.append(tuple([i_tup.strip() for i_tup in ip.split('=')]))
+
+            if not i_tuples or len(i_props) < 2:
+                continue
+
+            partial_dict = defaultdict(list)
+            try:
+                for k, v in i_tuples:
+                    if v_name in k:
+                        value_name = v
+                    partial_dict[k].append(v)
+            except ValueError:
+                print('ERR: Invalid INI entry in file {0}'.format(ini_path))
+
+            ini_dict[value_name] = partial_dict
+
+    return ini_dict
 
 def get_data(comm_markets_path, distances_path):
     '''
@@ -33,6 +77,7 @@ def get_data(comm_markets_path, distances_path):
     infocards = dict()
     sys_ids = dict()
     system_files = dict()
+    systems = dict()
 
     # TODO: Separate out into helper functions; make a specialized class for this and generalize config parsing
 
@@ -42,104 +87,77 @@ def get_data(comm_markets_path, distances_path):
                 next(i, None)
                 infocards[line.strip()] = next(i, None)
 
-    with open(Config.FILEPATH + 'DATA/EQUIPMENT/select_equip.ini', 'r') as e:
-        for line in e:
-            if "=" in line:
-                e_type, e_data = (e.strip().lower() for e in line.split('=', maxsplit=1))
-                if "nickname" in e_type and "commodity" in e_data:
-                    commodities[e_data] = {
-                        "strid_name": "",
-                        "display_name": "",
-                        "base_price": 0.0,
-                        "consumed_by": [],
-                        "produced_by": []
-                    }
-                    commodities[e_data]["strid_name"] = next(e).split('=', maxsplit=1)[1].strip().lower()
+    select_equip = read_ini(Config.FILEPATH + 'DATA/EQUIPMENT/select_equip.ini', filter_str="commodity")
+    goods = read_ini(Config.FILEPATH + 'DATA/EQUIPMENT/goods.ini')
+    market_commodities = read_ini(comm_markets_path, 'base')
+    u_systems = read_ini(Config.FILEPATH + 'DATA/UNIVERSE/universe.ini', filter_str="system")
+    u_bases = read_ini(Config.FILEPATH + 'DATA/UNIVERSE/universe.ini', filter_str="base")
 
-    with open(Config.FILEPATH + 'DATA/EQUIPMENT/goods.ini', 'r') as g:
-        current_commod = ""
-        for line in g:
-            if "=" in line:
-                g_type, g_data = (g.strip().lower() for g in line.split('=', maxsplit=1))
-                if "nickname" in g_type:
-                    current_commod = g_data
-                if g_type == "price" and current_commod in commodities:
-                    commodities[current_commod]["base_price"] = float(g_data)
+    for k, v in select_equip.items():
+        commodities[k.lower()] = {
+            "ids_name": v['ids_name'],
+            "display_name": "",
+            "base_price": 0.0,
+            "consumed_by": [],
+            "produced_by": []
+            }
 
-    with open(comm_markets_path, 'r') as f:
-        base = ""
-        for line in f:
-            if "=" in line:
-                i_type, i_data = (i.strip().lower() for i in line.split('=', maxsplit=1))
-                if "base" in i_type:
-                    bases[i_data] = {
-                        "strid_name": "",
-                        "display_name": "",
-                        "archetype": "",
-                        "system": "",
-                        "commodities": {}
-                    }
-                    base = i_data
-                elif "marketgood" in i_type:
-                    i_data = i_data.split(",")
-                    i_commod = i_data.pop(0)
-                    bases[base]["commodities"][i_commod] = {
-                        'raw_data': [float(i) for i in i_data],
-                        'price_mult': float(i_data.pop()),
-                        'consumer': int(i_data.pop()), # this isn't actually a flag for buying / selling, but we can use it as one since it's ignored
-                        'max': int(i_data.pop()),
-                        'min': int(i_data.pop()),
-                        'rep': float(i_data.pop()),
-                        'rank': int(i_data.pop()),
-                        'display_name': infocards[commodities[i_commod]["strid_name"]].strip()
-                        }
-                    bases[base]["commodities"][i_commod]['actual_price'] = bases[base]["commodities"][i_commod]['price_mult'] * commodities[i_commod]['base_price']
-                    if bases[base]["commodities"][i_commod]['consumer'] or bases[base]["commodities"][i_commod]['price_mult'] > 1.0:
-                        commodities[i_commod]['consumed_by'].append(bases[base])
-                    if not bases[base]["commodities"][i_commod]['consumer']:
-                        commodities[i_commod]['produced_by'].append(bases[base])
+    for k, v in goods.items():
+        if k.lower() not in commodities.keys():
+            continue
+        commodities[k.lower()]["base_price"] = float(v['price'][0])
 
-    with open(Config.FILEPATH + 'DATA/UNIVERSE/universe.ini', 'r') as u:
-        base = ""
-        sys = ""
-        system = False
-        for line in u:
-            if "[system]" in line.lower():
-                system = True
-            elif "[base]" in line.lower():
-                system = False
-            if "=" in line:
-                u_type, u_data = (u.strip().lower() for u in line.split('=', maxsplit=1))
-                if "nickname" in u_type:
-                    if system:
-                        sys_ids[u_data] = ""
-                        sys = u_data
-                    else:
-                        base = u_data
-                elif "strid_name" in u_type:
-                    if system:
-                        sys_ids[sys] = u_data
-                    else:
-                        try:
-                            bases[base]["strid_name"] = u_data
-                        except:
-                            pass
-                            # print("WARN: Base {0} found in universe.ini, but not in market_commodities.ini. May be intentional.".format(base))
-                elif "system" in u_type:
-                    try:
-                        bases[base]["system"] = u_data
-                        bases[base]["system_dis"] = ""
-                    except KeyError:
-                        continue
-                elif "file" in u_type and system:
-                    system_files[sys] = u_data
+    for k, v in market_commodities.items():
+        bases[k.lower()] = {
+            "ids_name": "",
+            "display_name": "",
+            "archetype": "",
+            "system": "",
+            "commodities": {}
+        }
 
-    systems = dict()
+        for mgs in v['MarketGood']:
+            mg = mgs.split(', ')
+            raw_data = [m for m in mg]
+            commo = mg.pop(0).lower()
+            base = bases[k.lower()]['commodities']
+            base[commo] = {
+                'raw_data': raw_data,
+                'price_mult': float(mg.pop()),
+                'consumer': int(mg.pop()),
+                'max': int(mg.pop()),
+                'min': int(mg.pop()),
+                'rep': float(mg.pop()),
+                'rank': int(mg.pop()),
+                'display_name': infocards[commodities[commo]["ids_name"][0]].strip()
+            }
+
+            base[commo]['actual_price'] = base[commo]['price_mult'] * commodities[commo]['base_price']
+
+            if base[commo]['price_mult'] > 1.0 or base[commo]['consumer']:
+                commodities[commo]['consumed_by'].append(bases[k.lower()])
+            if not base[commo]['consumer']:
+                commodities[commo]['produced_by'].append(bases[k.lower()])
+
+    for k, v in u_systems.items():
+        sys_ids[k.lower()] = v['strid_name'][0]
+        if 'file' in v.keys(): # thanks multiuniverse plugin, very cool
+            system_files[k.lower()] = v['file'][0]
+
+    for k, v in u_bases.items():
+        try:
+            bases[k.lower()]["ids_name"] = v['strid_name'][0].lower()
+            bases[k.lower()]["system"] = v['system'][0].lower()
+        except KeyError:
+            pass
 
     for b_name, b_dict in bases.items():
-        strid_name = b_dict['strid_name']
+        strid_name = b_dict['ids_name']
         system = b_dict['system']
-        sys_strid_name = sys_ids[system]
+        try:
+            sys_strid_name = sys_ids[system]
+        except KeyError:
+            print(b_dict)
         system_path = ""
 
         try:
@@ -147,34 +165,7 @@ def get_data(comm_markets_path, distances_path):
         except KeyError:
             print("WARN: Path not found for system '{0}'.".format(system))
         if system not in systems.keys():
-            systems[system] = {}
-            with open(Config.UNIPATH + system_path, 'r') as sys:
-                sys_lines = list(filter(None, [sn.strip() for sn in re.split(r'^\[([A-Za-z]*)\]', sys.read(), flags=re.M)]))
-                sys_keys = [s.lower() for s in sys_lines[::2]]
-                sys_values = sys_lines[1::2]
-                sys_dict = systems[system]
-                for s in range(len(sys_keys)):
-                    s_tuples_raw = []
-                    try:
-                        s_props = [sys for sys in sys_values[s].split('\n') if ';' not in sys]
-                    except IndexError:
-                        print("ERR: Got IndexError while unpacking values in system {0}.".format(system))
-                    for sp in s_props:
-                        s_tuples_raw.append(tuple([s_tup.strip().lower() for s_tup in sp.split('=')]))
-                    if not s_tuples_raw or len(s_props) < 2:
-                        continue
-                    if 'nickname' in s_tuples_raw[0][0]:
-                        nickname = s_tuples_raw.pop(0)
-                        try:
-                            sys_dict[nickname[1]] = {s_type: s_data for s_type, s_data in s_tuples_raw}
-                        except ValueError:
-                            print("ERR: Got ValueError while unpacking sysinfo tuple in system {1}: {0}".format(s_tuples_raw, system))
-                    else:
-                        try:
-                            sys_dict[sys_keys[s]] = {s_type: s_data for s_type, s_data in s_tuples_raw}
-                        except ValueError:
-                            print(s_props)
-                            print("ERR: Got ValueError while unpacking sysinfo tuple in system {1}: {0}".format(s_tuples_raw, system))
+            systems[system] = read_ini(Config.UNIPATH + system_path)
 
         if strid_name == "0":
             b_dict["display_name"] = strid_name
@@ -192,7 +183,7 @@ def get_data(comm_markets_path, distances_path):
             print("ERR: No IDS {0} found in infocards.txt for {1}!".format(sys_strid_name, system))
 
     for c_name, c_dict in commodities.items():
-        strid_name = c_dict["strid_name"]
+        strid_name = c_dict["ids_name"][0]
         try:
             c_dict["display_name"] = infocards[strid_name].strip()
         except KeyError:
