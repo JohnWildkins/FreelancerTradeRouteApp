@@ -6,5 +6,5 @@ class BaseList(FlaskForm):
     submit = SubmitField()
 
 class CommodList(FlaskForm):
-    commod_field = SelectField('Commodity')
+    commo = SelectField('Commodity')
     submit = SubmitField()

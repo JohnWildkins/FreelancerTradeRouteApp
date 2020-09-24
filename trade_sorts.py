@@ -31,11 +31,15 @@ def read_ini(ini_path, v_name='nickname', filter_str=None):
                 i_props = list(filter(None, [ip for ip in i_values[i].split('\n') if ';' not in ip]))
             except IndexError:
                 throw_ini_error(IndexError)
+                continue
+
+            if not i_props:
+                continue
 
             for ip in i_props:
                 i_tuples.append(tuple([i_tup.strip() for i_tup in ip.split('=')]))
 
-            if not i_tuples or len(i_props) < 2:
+            if not i_tuples:
                 continue
 
             partial_dict = defaultdict(list)
@@ -68,9 +72,13 @@ def get_data(comm_markets_path, distances_path):
     '''
 
 
+    #distances = pd.read_csv(distances_path, names = ['start', 'end', 'time'])
+    #distances = distances[distances['start']!=distances['end']]
+    #distances = distances[distances['time']!=-1]
+
     distances = pd.read_csv(distances_path, names = ['start', 'end', 'time'])
-    distances = distances[distances['start']!=distances['end']]
-    distances = distances[distances['time']!=-1]
+    distances = distances.set_index(['start', 'end'])
+    distances['time'] = distances['time'].apply(lambda x: x + 20000) # adding dock time because that's not exported for some reason
 
     commodities = dict()
     bases = dict()
@@ -95,6 +103,7 @@ def get_data(comm_markets_path, distances_path):
 
     for k, v in select_equip.items():
         commodities[k.lower()] = {
+            "nickname": k.lower(),
             "ids_name": v['ids_name'],
             "display_name": "",
             "base_price": 0.0,
@@ -109,6 +118,7 @@ def get_data(comm_markets_path, distances_path):
 
     for k, v in market_commodities.items():
         bases[k.lower()] = {
+            "nickname": k.lower(),
             "ids_name": "",
             "display_name": "",
             "archetype": "",
@@ -189,6 +199,9 @@ def get_data(comm_markets_path, distances_path):
         except KeyError:
             c_dict["display_name"] = c_name
             print("ERR: No IDS {0} found in infocards.txt for {1}".format(strid_name, c_name))
+
+    with open('help.txt', 'w') as w:
+        w.write(str(commodities['commodity_credit1']['produced_by']))
 
     return distances, bases, commodities
 

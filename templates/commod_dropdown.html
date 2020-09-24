@@ -3,32 +3,100 @@
 {% block title %} Commodity View {% endblock %}
 
 {% block content %}
-
-    <form action="{{ url_for('commod_dropdown') }}" method="POST">
-        <div>{{ form.commod_field.label }}: {{ form.commod_field }} {{ form.submit }}</div>
-    </form>
-    {% if producers %}
-        <h3><span class="badge badge-success">Producers</span></h3>
-        <table class="table table-dark table-sm table-striped">
+    <nav class="navbar navbar-dark bg-dark d-flex">
+        <div class="btn-group" role="group" aria-label="Table Selections" id='selections'>
+            <button class="btn btn-primary" type="button">Producers</button>
+            <button class="btn btn-secondary" type="button">Consumers</button>
+            <button class="btn btn-secondary" type="button">All Available Routes</button>
+        </div>
+        <form class="form-inline" id="commodform">
+            {{ form.commo }}
+        </form>
+    </nav>
+    <table class="table table-dark table-sm table-striped">
+        <thead>
             <tr>
                 <th scope="col">Base</th>
                 <th scope="col">System</th>
-                <th scope="col">Sell Price</th>
+                <th scope="col">Price</th>
             </tr>
-            {% for base in producers %}
-                <tr>
-                    <td>{{ base['display_name'] }}</td>
-                    <td>{{ base['system_dis'] }}</td>
-                    <td>{{ base['commodities'][commod]['actual_price']|round|int }}</td>
-                </tr>
-            {% endfor %}
-        </table>
-    {% elif not producers and commod %}
-        <h3><span class="badge badge-warning">Selected commodity '{{ commod }}' has no sell-points.</span></h3>
-    {% endif %}
+        </thead>
+        <tbody id="table-body">
+            <tr>
+                <td colspan=3>No commodity loaded. This should disappear in a moment.</td>
+            </tr>
+        </tbody>
+    </table>
+
+	<div id="errorAlert" class="alert alert-danger" role="alert" style="display:none;"></div>
 
 {% endblock %}
 
 {% block scripts %}
+
+<script>
+    $(document).ready(function() {
+        $('#commodform').change(function(event) {
+            $.ajax({
+                data: {
+                    commo: $('#commo').val()
+                },
+                method: 'POST',
+                url: '/commodity'
+            })
+            .done(function(data) {
+                if (data.error) {
+                    $('#errorAlert').text(data.error).show();
+                } else {
+                    var consumers = data.market.consumers;
+                    var producers = data.market.producers;
+                    var trade_map = data.market.trade_map;
+                    var data_type = "";
+                    $('#table-body').empty()
+                    $('#selections').children('button').each(function() {
+                        if ($(this).hasClass('btn-primary')) {
+                            data_type = $(this).text().toLowerCase();
+                        }
+                    })
+                    if (data_type == "producers") {
+                        for (const key in producers) {
+                            if (producers.hasOwnProperty(key)) {
+                                const element = producers[key];
+                                $('#table-body').append('<tr><td>' + key + '</td><td>' + element.system + '</td><td>' + Math.round(element.price) + '</td></tr>');
+                            }
+                        }
+                    } else if (data_type == "consumers") {
+                        for (const key in consumers) {
+                            if (consumers.hasOwnProperty(key)) {
+                                const element = consumers[key];
+                                $('#table-body').append('<tr><td>' + key + '</td><td>' + element.system + '</td><td>' + Math.round(element.price) + '</td></tr>');
+                            }
+                        }
+                    } else {
+                        for (const origin in trade_map) {
+                            if (trade_map.hasOwnProperty(origin)) {
+                                const or_v = trade_map[origin];
+                                for (const dest in or_v) {
+                                    if(or_v.hasOwnProperty(dest)) {
+                                        const dest_v = or_v[dest];
+                                        $('#table-body').append('<tr><td>' + or_v.name + '</td><td>' + dest_v.name + '</td><td>' + dest_v.time + '</td></tr>')
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            event.preventDefault();
+        });
+        $('#selections').on('click', 'button', function(event) {
+            $(this).siblings().removeClass('btn-primary').addClass('btn-secondary');
+            $(this).addClass('btn-primary').removeClass('btn-secondary');
+            $('#commodform').change();
+        });
+        $('#commodform').change();
+    });
+</script>
 
 {% endblock %}
